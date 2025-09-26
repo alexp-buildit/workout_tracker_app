@@ -22,7 +22,7 @@ router.get('/:username/analytics/:exerciseName', async (req, res) => {
 
     // Get exercise analytics
     const analytics = await Workout.getExerciseAnalytics(
-      user._id,
+      user.id,
       exerciseName,
       equipment
     );
@@ -77,31 +77,27 @@ router.get('/:username/exercises', async (req, res) => {
       });
     }
 
-    // Get unique exercises
-    const exercises = await Workout.aggregate([
-      { $match: { user: user._id } },
-      { $unwind: '$exercises' },
-      {
-        $group: {
-          _id: {
-            name: '$exercises.name',
-            equipment: '$exercises.equipment'
-          },
-          count: { $sum: 1 },
-          lastPerformed: { $max: '$date' }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          name: '$_id.name',
-          equipment: '$_id.equipment',
-          count: 1,
-          lastPerformed: 1
-        }
-      },
-      { $sort: { count: -1, name: 1 } }
-    ]);
+    // Get unique exercises using PostgreSQL JSON operations
+    const { sequelize } = require('../config/database');
+    const [exercises] = await sequelize.query(`
+      SELECT
+        exercise->>'name' as name,
+        exercise->>'equipment' as equipment,
+        COUNT(*) as count,
+        MAX(date) as "lastPerformed"
+      FROM (
+        SELECT
+          date,
+          json_array_elements(exercises) as exercise
+        FROM workouts
+        WHERE "userId" = :userId
+      ) as flattened
+      GROUP BY exercise->>'name', exercise->>'equipment'
+      ORDER BY count DESC, name ASC
+    `, {
+      replacements: { userId: user.id },
+      type: sequelize.QueryTypes.SELECT
+    });
 
     res.status(200).json({
       exercises: exercises
@@ -137,10 +133,16 @@ router.get('/:username/stats', async (req, res) => {
     daysAgo.setDate(daysAgo.getDate() - parseInt(days));
 
     // Get workouts for the specified period
-    const workouts = await Workout.find({
-      user: user._id,
-      date: { $gte: daysAgo }
-    }).sort({ date: -1 });
+    const { Op } = require('sequelize');
+    const workouts = await Workout.findAll({
+      where: {
+        userId: user.id,
+        date: {
+          [Op.gte]: daysAgo
+        }
+      },
+      order: [['date', 'DESC']]
+    });
 
     // Calculate stats
     const stats = {
@@ -239,9 +241,14 @@ router.put('/:username/profile', async (req, res) => {
     // Update phone number if provided
     if (phoneNumber) {
       // Check if phone number is already used by another user
+      const { Op } = require('sequelize');
       const existingPhone = await User.findOne({
-        phoneNumber: phoneNumber.trim(),
-        _id: { $ne: user._id }
+        where: {
+          phoneNumber: phoneNumber.trim(),
+          id: {
+            [Op.ne]: user.id
+          }
+        }
       });
 
       if (existingPhone) {
@@ -251,10 +258,10 @@ router.put('/:username/profile', async (req, res) => {
         });
       }
 
-      user.phoneNumber = phoneNumber.trim();
+      await user.update({ phoneNumber: phoneNumber.trim() });
+    } else {
+      // No updates needed, but still return success
     }
-
-    await user.save();
 
     res.status(200).json({
       message: 'Profile updated successfully',
@@ -264,10 +271,10 @@ router.put('/:username/profile', async (req, res) => {
   } catch (error) {
     console.error('Update profile error:', error);
 
-    if (error.name === 'ValidationError') {
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         error: 'Validation failed',
-        message: Object.values(error.errors)[0].message
+        message: error.errors[0].message
       });
     }
 

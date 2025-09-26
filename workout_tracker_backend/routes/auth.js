@@ -18,7 +18,11 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if username already exists
-    const existingUser = await User.findOne({ username: username.toLowerCase().trim() });
+    const existingUser = await User.findOne({
+      where: {
+        username: username.toLowerCase().trim()
+      }
+    });
     if (existingUser) {
       return res.status(409).json({
         error: 'User already exists',
@@ -27,7 +31,11 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if phone number already exists
-    const existingPhone = await User.findOne({ phoneNumber: phoneNumber.trim() });
+    const existingPhone = await User.findOne({
+      where: {
+        phoneNumber: phoneNumber.trim()
+      }
+    });
     if (existingPhone) {
       return res.status(409).json({
         error: 'Phone already registered',
@@ -36,12 +44,10 @@ router.post('/register', async (req, res) => {
     }
 
     // Create new user
-    const user = new User({
+    const user = await User.create({
       username: username.toLowerCase().trim(),
       phoneNumber: phoneNumber.trim()
     });
-
-    await user.save();
 
     res.status(201).json({
       message: 'Account created successfully',
@@ -51,10 +57,10 @@ router.post('/register', async (req, res) => {
   } catch (error) {
     console.error('Registration error:', error);
 
-    if (error.name === 'ValidationError') {
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         error: 'Validation failed',
-        message: Object.values(error.errors)[0].message
+        message: error.errors[0].message
       });
     }
 
@@ -121,7 +127,9 @@ router.post('/check-username', async (req, res) => {
     }
 
     const existingUser = await User.findOne({
-      username: username.toLowerCase().trim()
+      where: {
+        username: username.toLowerCase().trim()
+      }
     });
 
     res.status(200).json({

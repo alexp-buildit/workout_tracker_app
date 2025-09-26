@@ -2,49 +2,22 @@
 
 ## Overview
 This guide will help you deploy your Workout Tracker app with:
-- **Backend**: Node.js/Express API on Render with MongoDB Atlas
-- **Frontend**: Next.js app on Vercel
+- **Backend**: Node.js/Express API on Render with PostgreSQL database
+- **Frontend**: Next.js app on Netlify
 
 ---
 
 ## 📋 Prerequisites
 
 1. **GitHub Account** (for code hosting)
-2. **MongoDB Atlas Account** (free tier available)
-3. **Render Account** (free tier available)
-4. **Vercel Account** (free tier available)
+2. **Render Account** (free tier available with PostgreSQL)
+3. **Netlify Account** (free tier available)
 
 ---
 
-## 🗄️ Database Setup (MongoDB Atlas)
+## 🗄️ Database Setup (Render PostgreSQL)
 
-### 1. Create MongoDB Atlas Cluster
-1. Go to [MongoDB Atlas](https://www.mongodb.com/atlas)
-2. Create a free account and log in
-3. Create a new cluster (choose free tier M0)
-4. Set cluster name: `workout-tracker`
-5. Choose your preferred cloud provider and region
-
-### 2. Create Database User
-1. Go to Database Access → Add New Database User
-2. Choose "Password" authentication
-3. Username: `workout_app`
-4. Generate a secure password (save it!)
-5. Grant "Read and write to any database" permission
-
-### 3. Configure Network Access
-1. Go to Network Access → Add IP Address
-2. Choose "Allow access from anywhere" (0.0.0.0/0) for now
-3. Or add specific IPs later for better security
-
-### 4. Get Connection String
-1. Go to Database → Connect → Connect your application
-2. Choose "Node.js" driver
-3. Copy the connection string
-4. Replace `<password>` with your database user password
-5. Replace `<dbname>` with `workout_tracker`
-
-Example: `mongodb+srv://workout_app:YOUR_PASSWORD@workout-tracker.xxxxx.mongodb.net/workout_tracker?retryWrites=true&w=majority`
+Render provides a free PostgreSQL database that integrates seamlessly with your web service. The database will be automatically configured when you deploy using the `render.yaml` file.
 
 ---
 
@@ -61,43 +34,38 @@ git remote add origin https://github.com/YOUR_USERNAME/workout-tracker-backend.g
 git push -u origin main
 ```
 
-### 2. Deploy on Render
+### 2. Deploy on Render using render.yaml
 1. Go to [Render Dashboard](https://dashboard.render.com)
-2. Click "New +" → "Web Service"
+2. Click "New +" → "Blueprint"
 3. Connect your GitHub repository (`workout-tracker-backend`)
-4. Configure the service:
+4. Render will automatically read the `render.yaml` file and:
+   - Create a PostgreSQL database named `workout-tracker-db`
+   - Create a web service named `workout-tracker-api`
+   - Configure environment variables automatically
 
-**Basic Settings:**
-- **Name**: `workout-tracker-api`
-- **Environment**: `Node`
-- **Region**: Choose closest to your users
-- **Branch**: `main`
-- **Root Directory**: Leave empty (or `workout_tracker_backend` if it's in a subdirectory)
+**The render.yaml file includes:**
+- **Database**: Free PostgreSQL instance
+- **Web Service**: Node.js application
+- **Auto-configured Environment Variables**:
+  - `DATABASE_URL`: Automatically linked to PostgreSQL
+  - `NODE_ENV`: Set to production
+  - `FRONTEND_URL`: Update this with your Netlify URL later
 
-**Build & Deploy Settings:**
-- **Build Command**: `npm install`
-- **Start Command**: `npm start`
-
-**Advanced Settings:**
-- **Plan**: Free (or choose paid plan for better performance)
-
-### 3. Add Environment Variables
-In your Render service dashboard, go to "Environment" and add:
-
-```
-NODE_ENV=production
-MONGODB_URI=your_mongodb_connection_string_here
-FRONTEND_URL=https://your-vercel-app-url.vercel.app
-```
+### 3. Update Frontend URL
+After your Netlify site is deployed, update the `FRONTEND_URL` in your Render service:
+1. Go to your service dashboard
+2. Navigate to "Environment"
+3. Update `FRONTEND_URL` to your Netlify URL
 
 ### 4. Deploy
-- Click "Create Web Service"
+- Click "Apply"
 - Wait for deployment to complete
 - Your API will be available at: `https://workout-tracker-api.onrender.com`
+- Database will be automatically created and connected
 
 ---
 
-## 🎨 Frontend Deployment (Vercel)
+## 🎨 Frontend Deployment (Netlify)
 
 ### 1. Update Environment Configuration
 Create `workout_tracker_frontend/.env.local`:
@@ -116,37 +84,48 @@ git remote add origin https://github.com/YOUR_USERNAME/workout-tracker-frontend.
 git push -u origin main
 ```
 
-### 3. Deploy on Vercel
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
-2. Click "New Project"
-3. Import your GitHub repository (`workout-tracker-frontend`)
-4. Configure the project:
+### 3. Deploy on Netlify
+1. Go to [Netlify Dashboard](https://app.netlify.com)
+2. Click "New site from Git"
+3. Choose "GitHub" and authorize Netlify
+4. Select your repository (`workout-tracker-frontend`)
+5. Configure the build settings:
 
-**Project Settings:**
-- **Framework Preset**: Next.js
-- **Root Directory**: `./` (or adjust if needed)
+**Build Settings:**
+- **Branch**: `main`
 - **Build Command**: `npm run build`
-- **Output Directory**: Leave default
-- **Install Command**: `npm install`
+- **Publish Directory**: `.next`
+- **Functions Directory**: Leave empty
 
 **Environment Variables:**
-Add in Vercel dashboard:
+In Site Settings → Environment Variables, add:
 ```
 NEXT_PUBLIC_API_URL=https://workout-tracker-api.onrender.com/api
 ```
 
-### 4. Deploy
-- Click "Deploy"
+### 4. Configure netlify.toml
+The `netlify.toml` file in your frontend handles:
+- Build configuration
+- Redirects for API calls
+- Security headers
+- SPA fallback routing
+
+### 5. Deploy
+- Click "Deploy site"
 - Wait for deployment to complete
-- Your app will be available at: `https://your-app-name.vercel.app`
+- Your app will be available at: `https://amazing-name-123456.netlify.app`
+- You can customize the domain name in Site Settings
 
 ---
 
 ## 🔄 Update Backend CORS
 
-Once your Vercel app is deployed, update your Render environment variables:
+Once your Netlify app is deployed, update your Render environment variables:
+1. Go to your Render service dashboard
+2. Navigate to "Environment"
+3. Update `FRONTEND_URL` to your Netlify URL:
 ```
-FRONTEND_URL=https://your-vercel-app-url.vercel.app
+FRONTEND_URL=https://your-app-name.netlify.app
 ```
 
 ---
@@ -159,7 +138,7 @@ Visit these URLs to test your backend:
 - API root: `https://workout-tracker-api.onrender.com/api`
 
 ### 2. Test Frontend
-1. Visit your Vercel URL
+1. Visit your Netlify URL
 2. Create a new account
 3. Add a workout
 4. Check that data persists
@@ -171,16 +150,16 @@ Visit these URLs to test your backend:
 ### Common Issues:
 
 **1. CORS Errors**
-- Make sure `FRONTEND_URL` in Render matches your Vercel URL exactly
+- Make sure `FRONTEND_URL` in Render matches your Netlify URL exactly
 - Check that both HTTP and HTTPS are handled correctly
 
 **2. Database Connection Issues**
-- Verify MongoDB Atlas IP whitelist includes 0.0.0.0/0
-- Check that connection string is correct in Render environment variables
-- Ensure database user has proper permissions
+- Check Render logs for PostgreSQL connection errors
+- Ensure `DATABASE_URL` environment variable is properly set (auto-configured via render.yaml)
+- Verify database service is running in Render dashboard
 
 **3. Build Failures**
-- Check build logs in Render/Vercel dashboards
+- Check build logs in Render/Netlify dashboards
 - Verify all dependencies are in package.json
 - Make sure Node.js versions are compatible
 
@@ -198,15 +177,16 @@ Visit these URLs to test your backend:
 - Check logs in Render dashboard
 - Free tier has some limitations (spins down after inactivity)
 
-### Vercel (Frontend)
-- Monitor deployments in Vercel dashboard
-- Check build logs for any issues
-- Free tier includes good analytics
+### Netlify (Frontend)
+- Monitor deployments in Netlify dashboard
+- Check build logs and function logs for any issues
+- Free tier includes analytics and form handling
 
-### MongoDB Atlas
-- Monitor database usage in Atlas dashboard
-- Set up alerts for high usage
-- Free tier has 512MB storage limit
+### Render PostgreSQL
+- Monitor database usage in Render dashboard
+- Check database logs for connection issues
+- Free tier has 1GB storage limit
+- Database automatically backs up and restores
 
 ---
 
@@ -214,15 +194,17 @@ Visit these URLs to test your backend:
 
 ### Security:
 1. **Environment Variables**: Never commit sensitive data
-2. **IP Whitelist**: Restrict MongoDB Atlas to specific IPs in production
+2. **Database Security**: Render PostgreSQL includes built-in security features
 3. **Rate Limiting**: Already implemented in backend
 4. **Input Validation**: Already implemented in backend
+5. **HTTPS**: Automatically provided by both Render and Netlify
 
 ### Performance:
-1. **Database Indexes**: Already implemented in models
-2. **Caching**: Consider adding Redis for session management
-3. **CDN**: Vercel includes CDN automatically
+1. **Database Indexes**: Already implemented in PostgreSQL models
+2. **Connection Pooling**: Built into Sequelize configuration
+3. **CDN**: Netlify includes global CDN automatically
 4. **Image Optimization**: Use Next.js Image component
+5. **Build Optimization**: Netlify's build optimization features
 
 ### Monitoring:
 1. **Error Tracking**: Consider adding Sentry
@@ -234,9 +216,10 @@ Visit these URLs to test your backend:
 ## 📞 Support
 
 If you encounter issues:
-1. Check the logs in Render/Vercel dashboards
+1. Check the logs in Render/Netlify dashboards
 2. Verify all environment variables are correct
 3. Test API endpoints directly
-4. Check MongoDB Atlas network access and user permissions
+4. Check PostgreSQL connection in Render database dashboard
+5. Verify `netlify.toml` configuration for frontend routing
 
 Your Workout Tracker is now ready for production! 🎉

@@ -1,8 +1,8 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { sequelize, testConnection } = require('./config/database');
 require('dotenv').config();
 
 const app = express();
@@ -32,15 +32,20 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// MongoDB connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/workout_tracker';
+// PostgreSQL connection and sync
+const initializeDatabase = async () => {
+  try {
+    await testConnection();
+    await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    console.log('✅ Database tables synchronized');
+  } catch (error) {
+    console.error('❌ Database initialization error:', error);
+    process.exit(1);
+  }
+};
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ Connected to MongoDB'))
-.catch((err) => console.error('❌ MongoDB connection error:', err));
+// Initialize database
+initializeDatabase();
 
 // Import routes
 const authRoutes = require('./routes/auth');

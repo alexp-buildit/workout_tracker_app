@@ -1,91 +1,85 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
-const userSchema = new mongoose.Schema({
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
   username: {
-    type: String,
-    required: [true, 'Username is required'],
+    type: DataTypes.STRING,
+    allowNull: false,
     unique: true,
-    trim: true,
-    minlength: [3, 'Username must be at least 3 characters long'],
-    maxlength: [30, 'Username must not exceed 30 characters']
+    validate: {
+      len: [3, 30],
+      notEmpty: true
+    }
   },
   phoneNumber: {
-    type: String,
-    required: [true, 'Phone number is required'],
-    trim: true,
-    match: [/^\+?[\d\s\-\(\)]+$/, 'Please enter a valid phone number']
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.STRING,
+    allowNull: false,
+    validate: {
+      notEmpty: true,
+      is: /^[\+]?[1-9][\d]{0,15}$/
+    }
   },
   lastLogin: {
-    type: Date,
-    default: null
+    type: DataTypes.DATE,
+    allowNull: true
   },
   isActive: {
-    type: Boolean,
-    default: true
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
   }
 }, {
-  timestamps: true
+  tableName: 'users',
+  timestamps: true,
+  indexes: [
+    {
+      unique: true,
+      fields: ['username']
+    },
+    {
+      fields: ['phoneNumber']
+    },
+    {
+      fields: ['createdAt']
+    }
+  ]
 });
 
-// Index for faster queries
-userSchema.index({ username: 1 });
-userSchema.index({ phoneNumber: 1 });
-userSchema.index({ createdAt: -1 });
-
-// Virtual for user profile
-userSchema.virtual('profile').get(function() {
-  return {
-    id: this._id,
-    username: this.username,
-    phoneNumber: this.phoneNumber,
-    createdAt: this.createdAt,
-    lastLogin: this.lastLogin
-  };
-});
-
-// Update the updatedAt field before saving
-userSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
-  next();
-});
-
-// Static method to find user by username
-userSchema.statics.findByUsername = function(username) {
-  return this.findOne({ username: username, isActive: true });
-};
-
-// Instance method to update last login
-userSchema.methods.updateLastLogin = function() {
+// Instance methods
+User.prototype.updateLastLogin = async function() {
   this.lastLogin = new Date();
-  return this.save();
+  return await this.save();
 };
 
-// Instance method to get public profile
-userSchema.methods.getPublicProfile = function() {
+User.prototype.getPublicProfile = function() {
   return {
-    id: this._id,
+    id: this.id,
     username: this.username,
     createdAt: this.createdAt,
     lastLogin: this.lastLogin
   };
+};
+
+// Static methods
+User.findByUsername = async function(username) {
+  return await User.findOne({
+    where: {
+      username: username.toLowerCase(),
+      isActive: true
+    }
+  });
 };
 
 // Transform output to remove sensitive data
-userSchema.methods.toJSON = function() {
-  const user = this.toObject();
-  delete user.__v;
-  return user;
+User.prototype.toJSON = function() {
+  const values = { ...this.get() };
+  delete values.updatedAt;
+  return values;
 };
-
-const User = mongoose.model('User', userSchema);
 
 module.exports = User;

@@ -28,16 +28,14 @@ router.post('/', async (req, res) => {
     }
 
     // Create workout
-    const workout = new Workout({
-      user: user._id,
+    const workout = await Workout.create({
+      userId: user.id,
       username: user.username,
       type: type.toLowerCase(),
       date: new Date(date),
       startTime: new Date(startTime),
       exercises: exercises
     });
-
-    await workout.save();
 
     res.status(201).json({
       message: 'Workout created successfully',
@@ -47,10 +45,10 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Create workout error:', error);
 
-    if (error.name === 'ValidationError') {
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         error: 'Validation failed',
-        message: Object.values(error.errors)[0].message
+        message: error.errors[0].message
       });
     }
 
@@ -79,22 +77,25 @@ router.get('/:username', async (req, res) => {
     }
 
     // Build query
-    const query = { user: user._id };
+    const whereClause = { userId: user.id };
 
     // Add date filter if provided
     if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+      const { Op } = require('sequelize');
+      whereClause.date = {};
+      if (startDate) whereClause.date[Op.gte] = new Date(startDate);
+      if (endDate) whereClause.date[Op.lte] = new Date(endDate);
     }
 
     // Get workouts with pagination
-    const workouts = await Workout.find(query)
-      .sort({ date: -1, createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const { count, rows: workouts } = await Workout.findAndCountAll({
+      where: whereClause,
+      order: [['date', 'DESC'], ['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: (parseInt(page) - 1) * parseInt(limit)
+    });
 
-    const totalWorkouts = await Workout.countDocuments(query);
+    const totalWorkouts = count;
 
     res.status(200).json({
       workouts: workouts,
@@ -134,7 +135,7 @@ router.get('/:username/month/:year/:month', async (req, res) => {
 
     // Get monthly workouts
     const workouts = await Workout.getMonthlyWorkouts(
-      user._id,
+      user.id,
       parseInt(year),
       parseInt(month)
     );
@@ -211,7 +212,7 @@ router.put('/:workoutId', async (req, res) => {
     const updateData = req.body;
 
     // Find and update workout
-    const workout = await Workout.findById(workoutId);
+    const workout = await Workout.findByPk(workoutId);
     if (!workout) {
       return res.status(404).json({
         error: 'Workout not found',
@@ -219,14 +220,9 @@ router.put('/:workoutId', async (req, res) => {
       });
     }
 
-    // Update fields
-    Object.keys(updateData).forEach(key => {
-      if (key !== '_id' && key !== 'user' && key !== 'username') {
-        workout[key] = updateData[key];
-      }
-    });
-
-    await workout.save();
+    // Update fields (excluding protected fields)
+    const { id, userId, username, createdAt, updatedAt, ...allowedUpdates } = updateData;
+    await workout.update(allowedUpdates);
 
     res.status(200).json({
       message: 'Workout updated successfully',
@@ -236,10 +232,10 @@ router.put('/:workoutId', async (req, res) => {
   } catch (error) {
     console.error('Update workout error:', error);
 
-    if (error.name === 'ValidationError') {
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         error: 'Validation failed',
-        message: Object.values(error.errors)[0].message
+        message: error.errors[0].message
       });
     }
 
@@ -257,7 +253,7 @@ router.delete('/:workoutId', async (req, res) => {
   try {
     const { workoutId } = req.params;
 
-    const workout = await Workout.findById(workoutId);
+    const workout = await Workout.findByPk(workoutId);
     if (!workout) {
       return res.status(404).json({
         error: 'Workout not found',
@@ -265,7 +261,7 @@ router.delete('/:workoutId', async (req, res) => {
       });
     }
 
-    await Workout.findByIdAndDelete(workoutId);
+    await workout.destroy();
 
     res.status(200).json({
       message: 'Workout deleted successfully'
@@ -288,7 +284,7 @@ router.put('/:workoutId/finish', async (req, res) => {
     const { workoutId } = req.params;
     const { endTime } = req.body;
 
-    const workout = await Workout.findById(workoutId);
+    const workout = await Workout.findByPk(workoutId);
     if (!workout) {
       return res.status(404).json({
         error: 'Workout not found',
@@ -296,8 +292,9 @@ router.put('/:workoutId/finish', async (req, res) => {
       });
     }
 
-    workout.endTime = endTime ? new Date(endTime) : new Date();
-    await workout.save();
+    await workout.update({
+      endTime: endTime ? new Date(endTime) : new Date()
+    });
 
     res.status(200).json({
       message: 'Workout finished successfully',

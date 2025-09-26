@@ -1,199 +1,184 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 
-const setSchema = new mongoose.Schema({
-  weight: {
-    type: Number,
-    required: true,
-    min: [0, 'Weight cannot be negative']
+const Workout = sequelize.define('Workout', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
   },
-  reps: {
-    type: Number,
-    required: true,
-    min: [1, 'Reps must be at least 1']
-  },
-  rpe: {
-    type: Number,
-    min: [1, 'RPE must be between 1 and 10'],
-    max: [10, 'RPE must be between 1 and 10'],
-    default: null
-  }
-}, { _id: false });
-
-const exerciseSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Exercise name is required'],
-    trim: true
-  },
-  equipment: {
-    type: String,
-    required: [true, 'Equipment type is required'],
-    enum: ['dumbbell', 'barbell', 'band', 'cable', 'bodyweight', 'machine'],
-    default: 'bodyweight'
-  },
-  warmupSets: {
-    type: Number,
-    min: [0, 'Warmup sets cannot be negative'],
-    default: 0
-  },
-  sets: [setSchema]
-}, { _id: false });
-
-const workoutSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true
+  userId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   username: {
-    type: String,
-    required: true,
-    index: true
+    type: DataTypes.STRING,
+    allowNull: false
   },
   type: {
-    type: String,
-    required: [true, 'Workout type is required'],
-    enum: ['push', 'pull', 'legs', 'upper', 'lower', 'other'],
-    lowercase: true
+    type: DataTypes.ENUM('push', 'pull', 'legs', 'upper', 'lower', 'other'),
+    allowNull: false
   },
   date: {
-    type: Date,
-    required: [true, 'Workout date is required'],
-    index: true
+    type: DataTypes.DATEONLY,
+    allowNull: false
   },
   startTime: {
-    type: Date,
-    required: true
+    type: DataTypes.DATE,
+    allowNull: false
   },
   endTime: {
-    type: Date,
-    default: null
+    type: DataTypes.DATE,
+    allowNull: true
   },
   duration: {
-    type: Number, // in minutes
-    default: null
+    type: DataTypes.INTEGER, // in minutes
+    allowNull: true
   },
-  exercises: [exerciseSchema],
+  exercises: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: []
+  },
   notes: {
-    type: String,
-    maxlength: [500, 'Notes cannot exceed 500 characters'],
-    trim: true
+    type: DataTypes.TEXT,
+    allowNull: true,
+    validate: {
+      len: [0, 500]
+    }
   },
   isCompleted: {
-    type: Boolean,
-    default: false
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   }
 }, {
-  timestamps: true
-});
-
-// Indexes for better query performance
-workoutSchema.index({ user: 1, date: -1 });
-workoutSchema.index({ username: 1, date: -1 });
-workoutSchema.index({ type: 1, date: -1 });
-workoutSchema.index({ 'exercises.name': 1 });
-workoutSchema.index({ createdAt: -1 });
-
-// Virtual for calculating duration
-workoutSchema.virtual('calculatedDuration').get(function() {
-  if (this.endTime && this.startTime) {
-    return Math.round((this.endTime - this.startTime) / (1000 * 60)); // in minutes
+  tableName: 'workouts',
+  timestamps: true,
+  indexes: [
+    {
+      fields: ['userId', 'date']
+    },
+    {
+      fields: ['username', 'date']
+    },
+    {
+      fields: ['type', 'date']
+    },
+    {
+      fields: ['date']
+    },
+    {
+      fields: ['createdAt']
+    }
+  ],
+  hooks: {
+    beforeSave: (workout) => {
+      if (workout.endTime && workout.startTime) {
+        workout.duration = Math.round((workout.endTime - workout.startTime) / (1000 * 60));
+        workout.isCompleted = true;
+      }
+    }
   }
-  return null;
-});
-
-// Pre-save middleware to calculate duration
-workoutSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
-
-  if (this.endTime && this.startTime) {
-    this.duration = Math.round((this.endTime - this.startTime) / (1000 * 60));
-    this.isCompleted = true;
-  }
-
-  next();
 });
 
 // Static method to get user's workouts for a specific month
-workoutSchema.statics.getMonthlyWorkouts = function(userId, year, month) {
+Workout.getMonthlyWorkouts = async function(userId, year, month) {
   const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0, 23, 59, 59);
+  const endDate = new Date(year, month, 0);
 
-  return this.find({
-    user: userId,
-    date: { $gte: startDate, $lte: endDate }
-  }).sort({ date: -1 });
+  return await this.findAll({
+    where: {
+      userId: userId,
+      date: {
+        [sequelize.Sequelize.Op.between]: [startDate, endDate]
+      }
+    },
+    order: [['date', 'DESC']]
+  });
 };
 
 // Static method to get exercise analytics
-workoutSchema.statics.getExerciseAnalytics = function(userId, exerciseName, equipment = null) {
-  const matchStage = {
-    user: userId,
-    'exercises.name': { $regex: exerciseName, $options: 'i' }
+Workout.getExerciseAnalytics = async function(userId, exerciseName, equipment = null) {
+  const whereClause = {
+    userId: userId
   };
 
+  // Use PostgreSQL JSON operations to filter exercises
+  let exerciseFilter = `exercises @> '[{"name": "${exerciseName}"}]'`;
+
   if (equipment) {
-    matchStage['exercises.equipment'] = equipment;
+    exerciseFilter = `exercises @> '[{"name": "${exerciseName}", "equipment": "${equipment}"}]'`;
   }
 
-  return this.aggregate([
-    { $match: matchStage },
-    { $unwind: '$exercises' },
-    { $match: { 'exercises.name': { $regex: exerciseName, $options: 'i' } } },
-    { $unwind: '$exercises.sets' },
-    {
-      $group: {
-        _id: null,
-        maxWeight: { $max: '$exercises.sets.weight' },
-        totalVolume: { $sum: { $multiply: ['$exercises.sets.weight', '$exercises.sets.reps'] } },
-        timesPerformed: { $sum: 1 },
-        avgRPE: { $avg: '$exercises.sets.rpe' },
-        sets: {
-          $push: {
-            date: '$date',
-            equipment: '$exercises.equipment',
-            exerciseName: '$exercises.name',
-            weight: '$exercises.sets.weight',
-            reps: '$exercises.sets.reps',
-            rpe: '$exercises.sets.rpe'
-          }
+  const workouts = await this.findAll({
+    where: {
+      ...whereClause,
+      [sequelize.Sequelize.Op.and]: [
+        sequelize.literal(exerciseFilter)
+      ]
+    }
+  });
+
+  // Process the results to extract analytics
+  let maxWeight = 0;
+  let totalVolume = 0;
+  let timesPerformed = 0;
+  let totalRPE = 0;
+  let rpeCount = 0;
+  const sets = [];
+
+  workouts.forEach(workout => {
+    workout.exercises.forEach(exercise => {
+      if (exercise.name.toLowerCase().includes(exerciseName.toLowerCase())) {
+        if (!equipment || exercise.equipment === equipment) {
+          exercise.sets.forEach(set => {
+            timesPerformed++;
+            maxWeight = Math.max(maxWeight, set.weight || 0);
+            totalVolume += (set.weight || 0) * (set.reps || 0);
+
+            if (set.rpe) {
+              totalRPE += set.rpe;
+              rpeCount++;
+            }
+
+            sets.push({
+              date: workout.date,
+              equipment: exercise.equipment,
+              exerciseName: exercise.name,
+              weight: set.weight,
+              reps: set.reps,
+              rpe: set.rpe
+            });
+          });
         }
       }
-    }
-  ]);
-};
+    });
+  });
 
-// Instance method to add exercise
-workoutSchema.methods.addExercise = function(exerciseData) {
-  this.exercises.push(exerciseData);
-  return this.save();
+  return [{
+    maxWeight,
+    totalVolume,
+    timesPerformed,
+    avgRPE: rpeCount > 0 ? totalRPE / rpeCount : 0,
+    sets
+  }];
 };
 
 // Instance method to finish workout
-workoutSchema.methods.finishWorkout = function() {
+Workout.prototype.finishWorkout = async function() {
   this.endTime = new Date();
   this.isCompleted = true;
-  return this.save();
+  return await this.save();
 };
 
 // Transform output
-workoutSchema.methods.toJSON = function() {
-  const workout = this.toObject();
-  workout.id = workout._id;
-  delete workout._id;
-  delete workout.__v;
-  return workout;
+Workout.prototype.toJSON = function() {
+  const values = { ...this.get() };
+  return values;
 };
-
-const Workout = mongoose.model('Workout', workoutSchema);
 
 module.exports = Workout;
