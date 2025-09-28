@@ -31,8 +31,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 export default function WorkoutTracker() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [user, setUser] = useState<string>('demo_user');
+  const user = 'demo_user';
 
   // Workout form state
   const [workoutType, setWorkoutType] = useState('push');
@@ -43,10 +42,6 @@ export default function WorkoutTracker() {
     warmupSets: 0,
     sets: [{ weight: 0, reps: 0, rpe: 0 }]
   }]);
-
-  useEffect(() => {
-    loadWorkouts();
-  }, []);
 
   const loadWorkouts = async () => {
     try {
@@ -61,7 +56,7 @@ export default function WorkoutTracker() {
         try {
           const response = await axios.get(`${API_URL}/workouts/${user}`);
           setWorkouts(response.data.workouts || []);
-        } catch (secondError) {
+        } catch {
           toast.error('Failed to load workouts');
         }
       } else {
@@ -69,6 +64,10 @@ export default function WorkoutTracker() {
       }
     }
   };
+
+  useEffect(() => {
+    loadWorkouts();
+  }, [user]);
 
   const createUser = async () => {
     try {
@@ -125,15 +124,15 @@ export default function WorkoutTracker() {
     setExercises(newExercises);
   };
 
-  const updateExercise = (index: number, field: string, value: string | number) => {
+  const updateExercise = (index: number, field: keyof Exercise, value: string | number) => {
     const newExercises = [...exercises];
-    (newExercises[index] as any)[field] = value;
+    (newExercises[index] as Record<string, unknown>)[field] = value;
     setExercises(newExercises);
   };
 
-  const updateSet = (exerciseIndex: number, setIndex: number, field: string, value: number) => {
+  const updateSet = (exerciseIndex: number, setIndex: number, field: keyof Set, value: number) => {
     const newExercises = [...exercises];
-    (newExercises[exerciseIndex].sets[setIndex] as any)[field] = value;
+    (newExercises[exerciseIndex].sets[setIndex] as Record<string, unknown>)[field] = value;
     setExercises(newExercises);
   };
 
