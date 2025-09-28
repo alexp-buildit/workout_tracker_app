@@ -50,7 +50,7 @@ export default function WorkoutTracker() {
     } catch (error) {
       console.error('Error loading workouts:', error);
       // If user doesn't exist, create them first
-      if (error.response?.status === 404) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
         await createUser();
         // Try loading workouts again
         try {
@@ -67,7 +67,7 @@ export default function WorkoutTracker() {
 
   useEffect(() => {
     loadWorkouts();
-  }, [user]);
+  }, []);
 
   const createUser = async () => {
     try {
