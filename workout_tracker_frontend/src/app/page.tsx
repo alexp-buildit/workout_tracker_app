@@ -296,7 +296,7 @@ export default function WorkoutTracker() {
       setActiveWorkout(null);
       setWorkoutTimer(0);
       toast.success(`Workout completed! Duration: ${duration} minutes`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to save workout');
     }
   };
@@ -313,7 +313,7 @@ export default function WorkoutTracker() {
     try {
       await saveWorkout(savedWorkout);
       toast.success('Workout saved!');
-    } catch (error) {
+    } catch {
       toast.error('Failed to save workout');
     }
   };
@@ -384,7 +384,6 @@ export default function WorkoutTracker() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
 
@@ -444,47 +443,6 @@ export default function WorkoutTracker() {
     return { totalWorkouts, avgDuration, avgRPE, daysPerWeek };
   };
 
-  const getExerciseAnalytics = (exerciseName: string, equipment?: string) => {
-    const exerciseWorkouts = workouts.filter(workout =>
-      workout.exercises.some(ex =>
-        ex.name.toLowerCase() === exerciseName.toLowerCase() &&
-        (!equipment || ex.equipment === equipment)
-      )
-    );
-
-    let maxWeight = 0;
-    let totalVolume = 0;
-    let timesPerformed = 0;
-    let totalRPE = 0;
-    let rpeCount = 0;
-    const allSets: unknown[] = [];
-
-    exerciseWorkouts.forEach(workout => {
-      workout.exercises.forEach(exercise => {
-        if (exercise.name.toLowerCase() === exerciseName.toLowerCase() &&
-            (!equipment || exercise.equipment === equipment)) {
-          timesPerformed++;
-          exercise.sets.forEach(set => {
-            maxWeight = Math.max(maxWeight, set.weight);
-            totalVolume += set.weight * set.reps;
-            if (set.rpe) {
-              totalRPE += set.rpe;
-              rpeCount++;
-            }
-            allSets.push({ ...set, date: workout.date });
-          });
-        }
-      });
-    });
-
-    return {
-      maxWeight,
-      totalVolume: Math.round(totalVolume * 10) / 10,
-      timesPerformed,
-      avgRPE: rpeCount > 0 ? Math.round((totalRPE / rpeCount) * 10) / 10 : 0,
-      sets: allSets.sort((a, b) => new Date((b as { date: string }).date).getTime() - new Date((a as { date: string }).date).getTime())
-    };
-  };
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
