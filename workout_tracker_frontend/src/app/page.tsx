@@ -81,6 +81,7 @@ export default function WorkoutTracker() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [username, setUsername] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
 
   // App state
   const [currentView, setCurrentView] = useState('workout');
@@ -160,7 +161,7 @@ export default function WorkoutTracker() {
         try {
           await axios.post(`${API_URL}/users`, {
             username: username.trim(),
-            phone: '000-000-0000' // Default phone for now
+            phone: phoneNumber.trim() || '000-000-0000'
           });
           const user = { username: username.trim() };
           setCurrentUser(user);
@@ -477,9 +478,16 @@ export default function WorkoutTracker() {
           <div className="space-y-4">
             <input
               type="text"
-              placeholder="Enter username (no password needed)"
+              placeholder="Enter username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400"
+            />
+            <input
+              type="tel"
+              placeholder="Phone number (optional for new accounts)"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && login()}
               className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400"
             />
