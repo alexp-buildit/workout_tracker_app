@@ -3,6 +3,88 @@ const User = require('../models/User');
 const Workout = require('../models/Workout');
 const router = express.Router();
 
+// @route   POST /api/users
+// @desc    Create a new user
+// @access  Public
+router.post('/', async (req, res) => {
+  try {
+    const { username, email, password, phone } = req.body;
+
+    // Validation
+    if (!username || !phone) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: 'Username and phone number are required'
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await User.findByUsername(username);
+    if (existingUser) {
+      return res.status(400).json({
+        error: 'Username already exists',
+        message: 'Please choose a different username'
+      });
+    }
+
+    // Create user
+    const user = await User.create({
+      username: username.toLowerCase().trim(),
+      phoneNumber: phone.trim()
+    });
+
+    res.status(201).json({
+      message: 'User created successfully',
+      user: user.getPublicProfile()
+    });
+
+  } catch (error) {
+    console.error('Create user error:', error);
+
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: error.errors[0].message
+      });
+    }
+
+    res.status(500).json({
+      error: 'Server error',
+      message: 'Failed to create user'
+    });
+  }
+});
+
+// @route   GET /api/users/:username
+// @desc    Get user by username
+// @access  Public
+router.get('/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const user = await User.findByUsername(username);
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'User does not exist'
+      });
+    }
+
+    res.status(200).json({
+      username: user.username,
+      phone: user.phoneNumber,
+      createdAt: user.createdAt
+    });
+
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: 'Failed to retrieve user'
+    });
+  }
+});
+
 // @route   GET /api/users/:username/analytics/:exerciseName
 // @desc    Get exercise analytics for a user
 // @access  Public
