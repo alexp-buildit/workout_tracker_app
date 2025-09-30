@@ -82,11 +82,14 @@ export default function WorkoutTracker() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [username, setUsername] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [authMode, setAuthMode] = useState<'signin' | 'register'>('signin');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   // App state
   const [currentView, setCurrentView] = useState('workout');
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
 
   // Workout state
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
@@ -140,43 +143,71 @@ export default function WorkoutTracker() {
     return () => clearInterval(autoSaveInterval);
   }, [activeWorkout, exercises, currentUser]);
 
-  const login = async () => {
+  const signin = async () => {
     if (!username.trim()) {
       toast.error('Please enter a username');
       return;
     }
 
+    setIsAuthLoading(true);
+
     try {
-      // Try to get existing user or create new one
       await axios.get(`${API_URL}/users/${username.trim()}`);
       const user = { username: username.trim() };
       setCurrentUser(user);
       setIsLoggedIn(true);
       localStorage.setItem('workoutTrackerUser', JSON.stringify(user));
       toast.success(`Welcome back, ${username}!`);
-      loadWorkouts(username);
+      await loadWorkouts(username);
     } catch (error: unknown) {
-      if ((error as { response?: { status?: number } })?.response?.status === 404) {
-        // User doesn't exist, create new user
-        try {
-          await axios.post(`${API_URL}/users`, {
-            username: username.trim(),
-            phone: phoneNumber.trim() || '000-000-0000'
-          });
-          const user = { username: username.trim() };
-          setCurrentUser(user);
-          setIsLoggedIn(true);
-          localStorage.setItem('workoutTrackerUser', JSON.stringify(user));
-          toast.success(`Welcome, ${username}! Account created.`);
-          loadWorkouts(username);
-        } catch (createError) {
-          console.error('Create user error:', createError);
-          toast.error('Failed to create account');
-        }
+      const axiosError = error as { response?: { status?: number; data?: unknown } };
+      if (axiosError.response?.status === 404) {
+        toast.error('Account not found. Please register first.');
+      } else if (axiosError.response?.status === 400) {
+        toast.error((axiosError.response.data as { message?: string })?.message || 'Invalid username format');
       } else {
         console.error('Login error:', error);
-        toast.error('Failed to login');
+        toast.error('Connection error. Please try again.');
       }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const register = async () => {
+    if (!username.trim()) {
+      toast.error('Please enter a username');
+      return;
+    }
+    if (!phoneNumber.trim()) {
+      toast.error('Please enter a phone number');
+      return;
+    }
+
+    setIsAuthLoading(true);
+
+    try {
+      await axios.post(`${API_URL}/users`, {
+        username: username.trim(),
+        phone: phoneNumber.trim()
+      });
+      const user = { username: username.trim() };
+      setCurrentUser(user);
+      setIsLoggedIn(true);
+      localStorage.setItem('workoutTrackerUser', JSON.stringify(user));
+      toast.success(`Welcome, ${username}! Account created.`);
+      await loadWorkouts(username);
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { status?: number; data?: unknown } };
+      if (axiosError.response?.status === 400) {
+        const message = (axiosError.response.data as { message?: string })?.message || 'Username already exists or invalid data';
+        toast.error(message);
+      } else {
+        console.error('Registration error:', error);
+        toast.error('Connection error. Please try again.');
+      }
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -302,22 +333,6 @@ export default function WorkoutTracker() {
     }
   };
 
-  const saveAndResumeWorkout = async () => {
-    if (!activeWorkout || !currentUser) return;
-
-    const filteredExercises = exercises.filter(ex => ex.name.trim() !== '');
-    const savedWorkout = {
-      ...activeWorkout,
-      exercises: filteredExercises
-    };
-
-    try {
-      await saveWorkout(savedWorkout);
-      toast.success('Workout saved!');
-    } catch {
-      toast.error('Failed to save workout');
-    }
-  };
 
   // Exercise functions
   const addExercise = () => {
@@ -468,36 +483,140 @@ export default function WorkoutTracker() {
     setCurrentDate(new Date());
   };
 
+  const deleteWorkout = async (workoutId: string) => {
+    if (!currentUser) return;
+
+    try {
+      // For now, we'll delete locally and not implement backend delete endpoint
+      const updatedWorkouts = workouts.filter(w => w.id !== workoutId);
+      setWorkouts(updatedWorkouts);
+      toast.success('Workout deleted');
+    } catch {
+      toast.error('Failed to delete workout');
+    }
+  };
+
+  const editWorkout = (workout: Workout) => {
+    setSelectedWorkout(workout);
+    setExercises(workout.exercises);
+    setWorkoutType(workout.type);
+    setWorkoutDate(workout.date);
+    setCurrentView('workout');
+  };
+
   // Authentication screen
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white flex items-center justify-center px-4">
         <Toaster position="top-right" />
-        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-8 border border-orange-500/20 w-full max-w-md">
-          <h1 className="text-3xl font-bold text-center mb-8 text-orange-400">💪 Workout Tracker</h1>
-          <div className="space-y-4">
-            <input
-              type="text"
-              placeholder="Enter username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400"
-            />
-            <input
-              type="tel"
-              placeholder="Phone number (optional for new accounts)"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && login()}
-              className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400"
-            />
-            <button
-              onClick={login}
-              className="w-full bg-orange-500 hover:bg-orange-600 py-3 rounded-lg font-semibold transition-colors"
-            >
-              Login
-            </button>
-          </div>
+        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6 md:p-8 border border-orange-500/20 w-full max-w-md">
+          <h1 className="text-2xl md:text-3xl font-bold text-center mb-6 text-orange-400">💪 Workout Tracker</h1>
+
+          {authMode === 'signin' ? (
+            // Sign In Form
+            <div className="space-y-4">
+              <div className="text-center mb-6">
+                <h2 className="text-xl font-semibold mb-2">Sign In</h2>
+                <p className="text-gray-300 text-sm">Welcome back! Enter your username to continue.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
+                <input
+                  type="text"
+                  placeholder="Enter your username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !isAuthLoading && signin()}
+                  disabled={isAuthLoading}
+                  className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400 text-base"
+                />
+              </div>
+
+              <button
+                onClick={signin}
+                disabled={isAuthLoading}
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-gray-500 disabled:cursor-not-allowed py-3 rounded-lg font-semibold transition-colors text-base flex items-center justify-center gap-2"
+              >
+                {isAuthLoading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>}
+                {isAuthLoading ? 'Signing In...' : 'Sign In'}
+              </button>
+
+              <div className="text-center mt-4">
+                <p className="text-gray-400 text-sm">
+                  Don&apos;t have an account?{' '}
+                  <button
+                    onClick={() => {
+                      setAuthMode('register');
+                      setUsername('');
+                      setPhoneNumber('');
+                    }}
+                    className="text-orange-400 hover:text-orange-300 font-medium"
+                  >
+                    Create one here
+                  </button>
+                </p>
+              </div>
+            </div>
+          ) : (
+            // Register Form
+            <div className="space-y-4">
+              <div className="text-center mb-6">
+                <h2 className="text-xl font-semibold mb-2">Create Account</h2>
+                <p className="text-gray-300 text-sm">Join today! Choose a username and add your phone number.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
+                <input
+                  type="text"
+                  placeholder="Choose a username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  disabled={isAuthLoading}
+                  className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400 text-base"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Phone Number</label>
+                <input
+                  type="tel"
+                  placeholder="Enter your phone number"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !isAuthLoading && register()}
+                  disabled={isAuthLoading}
+                  className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white placeholder-gray-400 text-base"
+                />
+              </div>
+
+              <button
+                onClick={register}
+                disabled={isAuthLoading}
+                className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-500 disabled:cursor-not-allowed py-3 rounded-lg font-semibold transition-colors text-base flex items-center justify-center gap-2"
+              >
+                {isAuthLoading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>}
+                {isAuthLoading ? 'Creating Account...' : 'Create Account'}
+              </button>
+
+              <div className="text-center mt-4">
+                <p className="text-gray-400 text-sm">
+                  Already have an account?{' '}
+                  <button
+                    onClick={() => {
+                      setAuthMode('signin');
+                      setUsername('');
+                      setPhoneNumber('');
+                    }}
+                    className="text-orange-400 hover:text-orange-300 font-medium"
+                  >
+                    Sign in here
+                  </button>
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -527,22 +646,28 @@ export default function WorkoutTracker() {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-gray-300">Welcome, {currentUser?.username}</span>
-            <nav className="flex gap-4">
+            <nav className="flex flex-wrap gap-2 md:gap-4">
               <button
                 onClick={() => setCurrentView('workout')}
-                className={`px-4 py-2 rounded-lg transition-colors ${currentView === 'workout' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
+                className={`px-2 md:px-4 py-2 rounded-lg transition-colors text-sm md:text-base ${currentView === 'workout' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
               >
                 🏋️ Workout
               </button>
               <button
                 onClick={() => setCurrentView('dashboard')}
-                className={`px-4 py-2 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
+                className={`px-2 md:px-4 py-2 rounded-lg transition-colors text-sm md:text-base ${currentView === 'dashboard' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
               >
                 📊 Dashboard
               </button>
               <button
+                onClick={() => setCurrentView('history')}
+                className={`px-2 md:px-4 py-2 rounded-lg transition-colors text-sm md:text-base ${currentView === 'history' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
+              >
+                📋 History
+              </button>
+              <button
                 onClick={() => setCurrentView('analytics')}
-                className={`px-4 py-2 rounded-lg transition-colors ${currentView === 'analytics' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
+                className={`px-2 md:px-4 py-2 rounded-lg transition-colors text-sm md:text-base ${currentView === 'analytics' ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
               >
                 📈 Analytics
               </button>
@@ -564,16 +689,19 @@ export default function WorkoutTracker() {
             <div className="flex items-center justify-between">
               <h2 className="text-3xl font-bold">Workout</h2>
               {activeWorkout ? (
-                <div className="flex gap-4">
-                  <button
-                    onClick={saveAndResumeWorkout}
-                    className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg"
-                  >
-                    💾 Save & Resume
-                  </button>
+                <div className="flex flex-col gap-4">
+                  <div className="text-center">
+                    <p className="text-sm text-gray-400 mb-2">
+                      💾 Your workout auto-saves every 30 seconds
+                    </p>
+                    <div className="flex items-center justify-center gap-2 text-xs text-green-400">
+                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      Auto-save enabled
+                    </div>
+                  </div>
                   <button
                     onClick={finishWorkout}
-                    className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg"
+                    className="bg-green-500 hover:bg-green-600 px-6 py-3 rounded-lg font-semibold transition-colors"
                   >
                     ✅ Finish Workout
                   </button>
@@ -588,6 +716,7 @@ export default function WorkoutTracker() {
                     <option value="Push">Push</option>
                     <option value="Pull">Pull</option>
                     <option value="Legs">Legs</option>
+                    <option value="Upper Body">Upper Body</option>
                     <option value="Other">Other</option>
                   </select>
                   <input
@@ -832,20 +961,167 @@ export default function WorkoutTracker() {
                       {day.date.getDate()}
                     </div>
                     {day.workouts.map((workout, idx) => (
-                      <div
+                      <button
                         key={idx}
+                        onClick={() => {
+                          setSelectedWorkout(workout);
+                          setCurrentView('workoutDetail');
+                        }}
                         className={`
-                          text-xs px-1 py-0.5 rounded mt-1 truncate
-                          ${workout.type === 'Push' ? 'bg-red-500/70' : ''}
-                          ${workout.type === 'Pull' ? 'bg-blue-500/70' : ''}
-                          ${workout.type === 'Legs' ? 'bg-green-500/70' : ''}
-                          ${workout.type === 'Other' ? 'bg-purple-500/70' : ''}
+                          text-xs px-1 py-0.5 rounded mt-1 truncate w-full text-left hover:brightness-110 transition-all
+                          ${workout.type === 'Push' ? 'bg-red-500/70 hover:bg-red-500/90' : ''}
+                          ${workout.type === 'Pull' ? 'bg-blue-500/70 hover:bg-blue-500/90' : ''}
+                          ${workout.type === 'Legs' ? 'bg-green-500/70 hover:bg-green-500/90' : ''}
+                          ${workout.type === 'Upper Body' ? 'bg-purple-500/70 hover:bg-purple-500/90' : ''}
+                          ${workout.type === 'Other' ? 'bg-orange-500/70 hover:bg-orange-500/90' : ''}
                         `}
-                        title={`${workout.type} - ${workout.exercises.length} exercises`}
+                        title={`Click to view details • ${workout.type} - ${workout.exercises.length} exercises`}
                       >
                         {workout.type}
-                      </div>
+                      </button>
                     ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* History View */}
+        {currentView === 'history' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl md:text-3xl font-bold">Workout History</h2>
+
+            {workouts.length === 0 ? (
+              <div className="bg-white/10 backdrop-blur-lg rounded-lg p-8 border border-orange-500/20 text-center">
+                <p className="text-gray-400 text-lg">No workouts recorded yet.</p>
+                <p className="text-gray-500 mt-2">Start your first workout to see it here!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {workouts
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .map((workout) => (
+                    <div
+                      key={workout.id}
+                      className="bg-white/10 backdrop-blur-lg rounded-lg p-4 md:p-6 border border-orange-500/20"
+                    >
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <h3 className="text-lg md:text-xl font-semibold">{workout.type} Workout</h3>
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              workout.type === 'Push' ? 'bg-red-500/70' :
+                              workout.type === 'Pull' ? 'bg-blue-500/70' :
+                              workout.type === 'Legs' ? 'bg-green-500/70' :
+                              workout.type === 'Upper Body' ? 'bg-purple-500/70' :
+                              'bg-orange-500/70'
+                            }`}>
+                              {workout.type}
+                            </span>
+                          </div>
+                          <p className="text-gray-300 text-sm md:text-base">
+                            {new Date(workout.date).toLocaleDateString()}
+                            {workout.duration && ` • ${workout.duration} minutes`}
+                            {` • ${workout.exercises.length} exercises`}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {workout.exercises.slice(0, 3).map((exercise, idx) => (
+                              <span key={idx} className="bg-black/20 px-2 py-1 rounded text-xs text-gray-300">
+                                {exercise.name}
+                              </span>
+                            ))}
+                            {workout.exercises.length > 3 && (
+                              <span className="bg-black/20 px-2 py-1 rounded text-xs text-gray-400">
+                                +{workout.exercises.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setSelectedWorkout(workout);
+                              setCurrentView('workoutDetail');
+                            }}
+                            className="bg-blue-500 hover:bg-blue-600 px-3 py-2 rounded text-sm transition-colors"
+                          >
+                            View Details
+                          </button>
+                          <button
+                            onClick={() => editWorkout(workout)}
+                            className="bg-orange-500 hover:bg-orange-600 px-3 py-2 rounded text-sm transition-colors"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm('Are you sure you want to delete this workout?')) {
+                                deleteWorkout(workout.id);
+                              }
+                            }}
+                            className="bg-red-500 hover:bg-red-600 px-3 py-2 rounded text-sm transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Workout Detail View */}
+        {currentView === 'workoutDetail' && selectedWorkout && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setCurrentView('history')}
+                className="bg-gray-500 hover:bg-gray-600 px-4 py-2 rounded transition-colors"
+              >
+                ← Back to History
+              </button>
+              <h2 className="text-2xl md:text-3xl font-bold">{selectedWorkout.type} Workout Details</h2>
+            </div>
+
+            <div className="bg-white/10 backdrop-blur-lg rounded-lg p-4 md:p-6 border border-orange-500/20">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div>
+                  <h4 className="font-semibold text-orange-400">Date</h4>
+                  <p>{new Date(selectedWorkout.date).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold text-orange-400">Duration</h4>
+                  <p>{selectedWorkout.duration ? `${selectedWorkout.duration} minutes` : 'Not recorded'}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold text-orange-400">Exercises</h4>
+                  <p>{selectedWorkout.exercises.length} exercises</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h4 className="text-lg font-semibold text-orange-400">Exercise Details</h4>
+                {selectedWorkout.exercises.map((exercise, idx) => (
+                  <div key={idx} className="bg-black/20 rounded-lg p-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-3">
+                      <h5 className="font-semibold">{exercise.name}</h5>
+                      <span className="text-sm text-gray-400">{exercise.equipment}</span>
+                    </div>
+                    {exercise.warmupSets > 0 && (
+                      <p className="text-sm text-gray-400 mb-2">Warmup Sets: {exercise.warmupSets}</p>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {exercise.sets.map((set, setIdx) => (
+                        <div key={setIdx} className="bg-white/5 rounded p-2 text-sm">
+                          <span className="font-medium">Set {setIdx + 1}:</span> {set.weight}lbs × {set.reps} reps
+                          {set.rpe && <span className="text-orange-400"> (RPE: {set.rpe})</span>}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -856,23 +1132,50 @@ export default function WorkoutTracker() {
         {/* Analytics View */}
         {currentView === 'analytics' && (
           <div className="space-y-6">
-            <h2 className="text-3xl font-bold">Analytics</h2>
+            <h2 className="text-2xl md:text-3xl font-bold">Analytics</h2>
 
-            <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6 border border-orange-500/20">
+            <div className="bg-white/10 backdrop-blur-lg rounded-lg p-4 md:p-6 border border-orange-500/20">
               <h3 className="text-xl font-bold mb-4">Exercise Analytics</h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                <div>
+                <div className="relative">
                   <label className="block text-sm font-medium mb-2">Exercise Name</label>
                   <input
                     type="text"
                     placeholder="Search exercise..."
-                    className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white"
+                    value={exerciseSearch}
+                    onChange={(e) => {
+                      setExerciseSearch(e.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white text-base"
                   />
+                  {showSuggestions && exerciseSearch && (
+                    <div className="absolute z-10 w-full bg-black/90 border border-orange-500/30 rounded-lg mt-1 max-h-48 overflow-y-auto">
+                      {MASTER_EXERCISE_LIST
+                        .filter(exercise =>
+                          exercise.toLowerCase().includes(exerciseSearch.toLowerCase())
+                        )
+                        .slice(0, 10)
+                        .map(exercise => (
+                          <button
+                            key={exercise}
+                            onClick={() => {
+                              setExerciseSearch(exercise);
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-orange-500/20 transition-colors"
+                          >
+                            {exercise}
+                          </button>
+                        ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">Equipment (optional)</label>
-                  <select className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white">
+                  <select className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white text-base">
                     <option value="">All Equipment</option>
                     <option value="Dumbbell">Dumbbell</option>
                     <option value="Barbell">Barbell</option>

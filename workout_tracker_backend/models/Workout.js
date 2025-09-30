@@ -20,7 +20,7 @@ const Workout = sequelize.define('Workout', {
     allowNull: false
   },
   type: {
-    type: DataTypes.ENUM('push', 'pull', 'legs', 'upper', 'lower', 'other'),
+    type: DataTypes.ENUM('push', 'pull', 'legs', 'upper body', 'other'),
     allowNull: false
   },
   date: {
