@@ -51,6 +51,14 @@ const Workout = sequelize.define('Workout', {
       len: [0, 500]
     }
   },
+  warmup: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
+  stretching: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
   isCompleted: {
     type: DataTypes.BOOLEAN,
     defaultValue: false

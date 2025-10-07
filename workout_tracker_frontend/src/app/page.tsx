@@ -8,6 +8,8 @@ interface Set {
   weight: number;
   reps: number;
   rpe?: number;
+  type?: 'standard' | 'negative' | 'static_hold';
+  duration?: number; // For static holds, in seconds
 }
 
 interface Exercise {
@@ -19,12 +21,15 @@ interface Exercise {
 
 interface Workout {
   id: string;
+  backendId?: string; // UUID from backend
   type: string;
   date: string;
   startTime: Date;
   endTime?: Date;
   duration?: number;
   exercises: Exercise[];
+  warmup?: boolean;
+  stretching?: boolean;
 }
 
 interface User {
@@ -95,6 +100,8 @@ export default function WorkoutTracker() {
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const [workoutType, setWorkoutType] = useState('Push');
   const [workoutDate, setWorkoutDate] = useState(new Date().toISOString().split('T')[0]);
+  const [workoutWarmup, setWorkoutWarmup] = useState(false);
+  const [workoutStretching, setWorkoutStretching] = useState(false);
   const [exercises, setExercises] = useState<Exercise[]>([{
     name: '',
     equipment: 'Dumbbell',
@@ -109,6 +116,15 @@ export default function WorkoutTracker() {
   const [activeExerciseIndex, setActiveExerciseIndex] = useState<number | null>(null);
   const [workoutTimer, setWorkoutTimer] = useState(0);
 
+  // Custom exercises
+  const [customExercises, setCustomExercises] = useState<string[]>([]);
+  const [showCustomExerciseModal, setShowCustomExerciseModal] = useState(false);
+  const [newCustomExercise, setNewCustomExercise] = useState('');
+
+  // Analytics
+  const [selectedExerciseForAnalytics, setSelectedExerciseForAnalytics] = useState('');
+  const [analyticsEquipmentFilter, setAnalyticsEquipmentFilter] = useState('');
+
   // Load data on mount
   useEffect(() => {
     const savedUser = localStorage.getItem('workoutTrackerUser');
@@ -117,6 +133,16 @@ export default function WorkoutTracker() {
       setCurrentUser(user);
       setIsLoggedIn(true);
       loadWorkouts(user.username);
+    }
+
+    // Load custom exercises from localStorage
+    const savedCustomExercises = localStorage.getItem('customExercises');
+    if (savedCustomExercises) {
+      try {
+        setCustomExercises(JSON.parse(savedCustomExercises));
+      } catch (e) {
+        console.error('Failed to load custom exercises:', e);
+      }
     }
   }, []);
 
@@ -228,6 +254,8 @@ export default function WorkoutTracker() {
         const workout = w as Record<string, unknown>;
         return {
           ...workout,
+          id: workout.id as string,
+          backendId: workout.id as string, // Store backend UUID
           startTime: new Date(workout.startTime as string),
           endTime: workout.endTime ? new Date(workout.endTime as string) : undefined
         };
@@ -246,19 +274,44 @@ export default function WorkoutTracker() {
     if (!currentUser) return;
 
     try {
-      await axios.post(`${API_URL}/workouts`, {
-        username: currentUser.username,
-        type: workout.type,
-        date: workout.date,
-        startTime: workout.startTime,
-        endTime: workout.endTime,
-        duration: workout.duration,
-        exercises: workout.exercises
-      });
+      let savedWorkout;
+
+      // If workout has a backendId, UPDATE existing workout
+      if (workout.backendId) {
+        const response = await axios.put(`${API_URL}/workouts/${workout.backendId}`, {
+          type: workout.type,
+          date: workout.date,
+          startTime: workout.startTime,
+          endTime: workout.endTime,
+          duration: workout.duration,
+          exercises: workout.exercises,
+          warmup: workout.warmup,
+          stretching: workout.stretching
+        });
+        savedWorkout = response.data.workout;
+      } else {
+        // CREATE new workout only if no backendId exists
+        const response = await axios.post(`${API_URL}/workouts`, {
+          username: currentUser.username,
+          type: workout.type,
+          date: workout.date,
+          startTime: workout.startTime,
+          endTime: workout.endTime,
+          duration: workout.duration,
+          exercises: workout.exercises,
+          warmup: workout.warmup,
+          stretching: workout.stretching
+        });
+        savedWorkout = response.data.workout;
+        // Store the backend ID for future updates
+        workout.backendId = savedWorkout.id;
+      }
 
       // Update local state
       const updatedWorkouts = workouts.filter(w => w.id !== workout.id);
       setWorkouts([...updatedWorkouts, workout]);
+
+      return savedWorkout;
     } catch (error) {
       console.error('Save workout error:', error);
       throw error;
@@ -296,7 +349,9 @@ export default function WorkoutTracker() {
       type: workoutType,
       date: workoutDate,
       startTime: new Date(),
-      exercises: []
+      exercises: [],
+      warmup: workoutWarmup,
+      stretching: workoutStretching
     };
 
     setActiveWorkout(newWorkout);
@@ -346,7 +401,7 @@ export default function WorkoutTracker() {
 
   const addSet = (exerciseIndex: number) => {
     const newExercises = [...exercises];
-    newExercises[exerciseIndex].sets.push({ weight: 0, reps: 0, rpe: 0 });
+    newExercises[exerciseIndex].sets.push({ weight: 0, reps: 0, rpe: 0, type: 'standard' });
     setExercises(newExercises);
   };
 
@@ -356,7 +411,7 @@ export default function WorkoutTracker() {
     setExercises(newExercises);
   };
 
-  const updateSet = (exerciseIndex: number, setIndex: number, field: keyof Set, value: number) => {
+  const updateSet = (exerciseIndex: number, setIndex: number, field: keyof Set, value: number | string) => {
     const newExercises = [...exercises];
     (newExercises[exerciseIndex].sets[setIndex] as unknown as Record<string, unknown>)[field] = value;
     setExercises(newExercises);
@@ -390,9 +445,82 @@ export default function WorkoutTracker() {
   };
 
   const getFilteredExercises = () => {
-    return MASTER_EXERCISE_LIST.filter(exercise =>
+    // Combine master list with custom exercises
+    const allExercises = [...MASTER_EXERCISE_LIST, ...customExercises];
+    return allExercises.filter(exercise =>
       exercise.toLowerCase().includes(exerciseSearch.toLowerCase())
     ).slice(0, 10);
+  };
+
+  const addCustomExercise = () => {
+    const trimmedName = newCustomExercise.trim();
+    if (!trimmedName) {
+      toast.error('Please enter an exercise name');
+      return;
+    }
+
+    // Check if exercise already exists (case-insensitive)
+    const allExercises = [...MASTER_EXERCISE_LIST, ...customExercises];
+    if (allExercises.some(ex => ex.toLowerCase() === trimmedName.toLowerCase())) {
+      toast.error('This exercise already exists');
+      return;
+    }
+
+    const updated = [...customExercises, trimmedName];
+    setCustomExercises(updated);
+    localStorage.setItem('customExercises', JSON.stringify(updated));
+    toast.success(`Added "${trimmedName}" to your exercises`);
+    setNewCustomExercise('');
+    setShowCustomExerciseModal(false);
+  };
+
+  const getExerciseAnalytics = () => {
+    if (!selectedExerciseForAnalytics) return null;
+
+    let maxWeight = 0;
+    let totalVolume = 0;
+    let timesPerformed = 0;
+    let totalRPE = 0;
+    let rpeCount = 0;
+    const performanceHistory: Array<{ date: string; weight: number; reps: number; volume: number }> = [];
+
+    workouts.forEach(workout => {
+      workout.exercises.forEach(exercise => {
+        const nameMatch = exercise.name.toLowerCase() === selectedExerciseForAnalytics.toLowerCase();
+        const equipmentMatch = !analyticsEquipmentFilter || exercise.equipment === analyticsEquipmentFilter;
+
+        if (nameMatch && equipmentMatch) {
+          exercise.sets.forEach(set => {
+            timesPerformed++;
+            maxWeight = Math.max(maxWeight, set.weight || 0);
+            const volume = (set.weight || 0) * (set.reps || 0);
+            totalVolume += volume;
+
+            if (set.rpe && set.rpe > 0) {
+              totalRPE += set.rpe;
+              rpeCount++;
+            }
+
+            performanceHistory.push({
+              date: workout.date,
+              weight: set.weight || 0,
+              reps: set.reps || 0,
+              volume
+            });
+          });
+        }
+      });
+    });
+
+    if (timesPerformed === 0) return null;
+
+    return {
+      maxWeight,
+      totalVolume,
+      timesPerformed,
+      avgRPE: rpeCount > 0 ? Math.round((totalRPE / rpeCount) * 10) / 10 : 0,
+      performanceHistory: performanceHistory.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    };
   };
 
   // Calendar and analytics functions
@@ -456,7 +584,11 @@ export default function WorkoutTracker() {
     const weeksInMonth = Math.ceil(monthEnd.getDate() / 7);
     const daysPerWeek = Math.round((uniqueDates.length / weeksInMonth) * 10) / 10;
 
-    return { totalWorkouts, avgDuration, avgRPE, daysPerWeek };
+    // Calculate average exercises per workout
+    const totalExercises = monthWorkouts.reduce((sum, w) => sum + w.exercises.length, 0);
+    const avgExercises = totalWorkouts > 0 ? Math.round((totalExercises / totalWorkouts) * 10) / 10 : 0;
+
+    return { totalWorkouts, avgDuration, avgRPE, daysPerWeek, avgExercises };
   };
 
 
@@ -707,30 +839,52 @@ export default function WorkoutTracker() {
                   </button>
                 </div>
               ) : (
-                <div className="flex gap-4">
-                  <select
-                    value={workoutType}
-                    onChange={(e) => setWorkoutType(e.target.value)}
-                    className="p-2 bg-black/20 border border-orange-500/30 rounded-lg text-white"
-                  >
-                    <option value="Push">Push</option>
-                    <option value="Pull">Pull</option>
-                    <option value="Legs">Legs</option>
-                    <option value="Upper Body">Upper Body</option>
-                    <option value="Other">Other</option>
-                  </select>
-                  <input
-                    type="date"
-                    value={workoutDate}
-                    onChange={(e) => setWorkoutDate(e.target.value)}
-                    className="p-2 bg-black/20 border border-orange-500/30 rounded-lg text-white"
-                  />
-                  <button
-                    onClick={startWorkout}
-                    className="bg-orange-500 hover:bg-orange-600 px-6 py-2 rounded-lg font-semibold"
-                  >
-                    🚀 Start Workout
-                  </button>
+                <div className="flex flex-col gap-4">
+                  <div className="flex gap-4">
+                    <select
+                      value={workoutType}
+                      onChange={(e) => setWorkoutType(e.target.value)}
+                      className="p-2 bg-black/20 border border-orange-500/30 rounded-lg text-white"
+                    >
+                      <option value="Push">Push</option>
+                      <option value="Pull">Pull</option>
+                      <option value="Legs">Legs</option>
+                      <option value="Upper Body">Upper Body</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={workoutDate}
+                      onChange={(e) => setWorkoutDate(e.target.value)}
+                      className="p-2 bg-black/20 border border-orange-500/30 rounded-lg text-white"
+                    />
+                    <button
+                      onClick={startWorkout}
+                      className="bg-orange-500 hover:bg-orange-600 px-6 py-2 rounded-lg font-semibold"
+                    >
+                      🚀 Start Workout
+                    </button>
+                  </div>
+                  <div className="flex gap-4 items-center">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={workoutWarmup}
+                        onChange={(e) => setWorkoutWarmup(e.target.checked)}
+                        className="w-4 h-4 rounded border-orange-500/30 bg-black/20 text-orange-500 focus:ring-orange-500"
+                      />
+                      <span className="text-sm text-gray-300">Include warmup</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={workoutStretching}
+                        onChange={(e) => setWorkoutStretching(e.target.checked)}
+                        className="w-4 h-4 rounded border-orange-500/30 bg-black/20 text-orange-500 focus:ring-orange-500"
+                      />
+                      <span className="text-sm text-gray-300">Include stretching</span>
+                    </label>
+                  </div>
                 </div>
               )}
             </div>
@@ -784,6 +938,15 @@ export default function WorkoutTracker() {
                                 {exerciseName}
                               </button>
                             ))}
+                            <button
+                              onClick={() => {
+                                setShowSuggestions(false);
+                                setShowCustomExerciseModal(true);
+                              }}
+                              className="w-full text-left p-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border-t border-orange-500/30"
+                            >
+                              + Add Custom Exercise
+                            </button>
                           </div>
                         )}
                       </div>
@@ -818,26 +981,56 @@ export default function WorkoutTracker() {
                     <div className="space-y-2">
                       <h6 className="font-semibold">Working Sets</h6>
                       {exercise.sets.map((set, setIndex) => (
-                        <div key={setIndex} className="grid grid-cols-4 gap-2 items-center">
-                          <div className="text-sm font-medium">Set {setIndex + 1}</div>
-                          <input
-                            type="number"
-                            placeholder="Weight"
-                            value={set.weight || ''}
-                            onChange={(e) => updateSet(exerciseIndex, setIndex, 'weight', parseFloat(e.target.value) || 0)}
-                            step="0.1"
-                            min="0"
-                            className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
-                          />
-                          <input
-                            type="number"
-                            placeholder="Reps"
-                            value={set.reps || ''}
-                            onChange={(e) => updateSet(exerciseIndex, setIndex, 'reps', parseInt(e.target.value) || 0)}
-                            min="1"
-                            className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
-                          />
-                          <div className="flex gap-1">
+                        <div key={setIndex} className="space-y-2 bg-white/5 rounded p-2">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium w-16">Set {setIndex + 1}</div>
+                            <select
+                              value={set.type || 'standard'}
+                              onChange={(e) => updateSet(exerciseIndex, setIndex, 'type', e.target.value)}
+                              className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
+                            >
+                              <option value="standard">Standard</option>
+                              <option value="negative">Negative</option>
+                              <option value="static_hold">Static Hold</option>
+                            </select>
+                            {exercise.sets.length > 1 && (
+                              <button
+                                onClick={() => removeSet(exerciseIndex, setIndex)}
+                                className="bg-red-500 hover:bg-red-600 px-2 py-1 rounded text-sm ml-auto"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <input
+                              type="number"
+                              placeholder="Weight"
+                              value={set.weight || ''}
+                              onChange={(e) => updateSet(exerciseIndex, setIndex, 'weight', parseFloat(e.target.value) || 0)}
+                              step="0.1"
+                              min="0"
+                              className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
+                            />
+                            {set.type !== 'static_hold' ? (
+                              <input
+                                type="number"
+                                placeholder="Reps"
+                                value={set.reps || ''}
+                                onChange={(e) => updateSet(exerciseIndex, setIndex, 'reps', parseInt(e.target.value) || 0)}
+                                min="1"
+                                className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                placeholder="Seconds"
+                                value={set.duration || ''}
+                                onChange={(e) => updateSet(exerciseIndex, setIndex, 'duration', parseInt(e.target.value) || 0)}
+                                min="1"
+                                className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
+                              />
+                            )}
                             <input
                               type="number"
                               placeholder="RPE"
@@ -845,16 +1038,8 @@ export default function WorkoutTracker() {
                               onChange={(e) => updateSet(exerciseIndex, setIndex, 'rpe', parseInt(e.target.value) || 0)}
                               min="1"
                               max="10"
-                              className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm flex-1"
+                              className="p-2 bg-black/20 border border-orange-500/30 rounded text-white text-sm"
                             />
-                            {exercise.sets.length > 1 && (
-                              <button
-                                onClick={() => removeSet(exerciseIndex, setIndex)}
-                                className="bg-red-500 hover:bg-red-600 px-2 py-1 rounded text-sm"
-                              >
-                                ✕
-                              </button>
-                            )}
                           </div>
                         </div>
                       ))}
@@ -874,6 +1059,44 @@ export default function WorkoutTracker() {
                 >
                   + Add Exercise
                 </button>
+              </div>
+            )}
+
+            {/* Custom Exercise Modal */}
+            {showCustomExerciseModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCustomExerciseModal(false)}>
+                <div className="bg-slate-800 rounded-lg p-6 border border-orange-500/30 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="text-xl font-bold mb-4">Add Custom Exercise</h3>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2">Exercise Name</label>
+                    <input
+                      type="text"
+                      value={newCustomExercise}
+                      onChange={(e) => setNewCustomExercise(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && addCustomExercise()}
+                      placeholder="Enter exercise name..."
+                      className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex gap-3 justify-end">
+                    <button
+                      onClick={() => {
+                        setShowCustomExerciseModal(false);
+                        setNewCustomExercise('');
+                      }}
+                      className="px-4 py-2 bg-gray-500 hover:bg-gray-600 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={addCustomExercise}
+                      className="px-4 py-2 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
+                    >
+                      Add Exercise
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -910,7 +1133,7 @@ export default function WorkoutTracker() {
             </div>
 
             {/* Monthly Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               {(() => {
                 const stats = getMonthlyStats();
                 return (
@@ -930,6 +1153,10 @@ export default function WorkoutTracker() {
                     <div className="bg-white/10 backdrop-blur-lg rounded-lg p-4 border border-orange-500/20">
                       <h3 className="text-lg font-semibold">Days/Week</h3>
                       <p className="text-2xl font-bold text-orange-400">{stats.daysPerWeek}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-lg rounded-lg p-4 border border-orange-500/20">
+                      <h3 className="text-lg font-semibold">Avg Exercises</h3>
+                      <p className="text-2xl font-bold text-orange-400">{stats.avgExercises}</p>
                     </div>
                   </>
                 );
@@ -1103,6 +1330,21 @@ export default function WorkoutTracker() {
                 </div>
               </div>
 
+              {(selectedWorkout.warmup || selectedWorkout.stretching) && (
+                <div className="flex gap-4 mb-6">
+                  {selectedWorkout.warmup && (
+                    <div className="flex items-center gap-2 bg-green-500/20 px-3 py-1 rounded-lg">
+                      <span className="text-sm">✓ Warmup included</span>
+                    </div>
+                  )}
+                  {selectedWorkout.stretching && (
+                    <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1 rounded-lg">
+                      <span className="text-sm">✓ Stretching included</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-4">
                 <h4 className="text-lg font-semibold text-orange-400">Exercise Details</h4>
                 {selectedWorkout.exercises.map((exercise, idx) => (
@@ -1117,8 +1359,18 @@ export default function WorkoutTracker() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                       {exercise.sets.map((set, setIdx) => (
                         <div key={setIdx} className="bg-white/5 rounded p-2 text-sm">
-                          <span className="font-medium">Set {setIdx + 1}:</span> {set.weight}lbs × {set.reps} reps
-                          {set.rpe && <span className="text-orange-400"> (RPE: {set.rpe})</span>}
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-medium">Set {setIdx + 1}</span>
+                            {set.type && set.type !== 'standard' && (
+                              <span className="text-xs px-1 py-0.5 rounded bg-purple-500/30 text-purple-300">
+                                {set.type === 'negative' ? 'Negative' : 'Hold'}
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            {set.weight}lbs × {set.type === 'static_hold' ? `${set.duration || 0}s` : `${set.reps} reps`}
+                            {set.rpe && <span className="text-orange-400"> (RPE: {set.rpe})</span>}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1147,13 +1399,14 @@ export default function WorkoutTracker() {
                     onChange={(e) => {
                       setExerciseSearch(e.target.value);
                       setShowSuggestions(true);
+                      setSelectedExerciseForAnalytics('');
                     }}
                     onFocus={() => setShowSuggestions(true)}
                     className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white text-base"
                   />
                   {showSuggestions && exerciseSearch && (
                     <div className="absolute z-10 w-full bg-black/90 border border-orange-500/30 rounded-lg mt-1 max-h-48 overflow-y-auto">
-                      {MASTER_EXERCISE_LIST
+                      {[...MASTER_EXERCISE_LIST, ...customExercises]
                         .filter(exercise =>
                           exercise.toLowerCase().includes(exerciseSearch.toLowerCase())
                         )
@@ -1163,6 +1416,7 @@ export default function WorkoutTracker() {
                             key={exercise}
                             onClick={() => {
                               setExerciseSearch(exercise);
+                              setSelectedExerciseForAnalytics(exercise);
                               setShowSuggestions(false);
                             }}
                             className="w-full text-left px-3 py-2 hover:bg-orange-500/20 transition-colors"
@@ -1175,7 +1429,11 @@ export default function WorkoutTracker() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">Equipment (optional)</label>
-                  <select className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white text-base">
+                  <select
+                    value={analyticsEquipmentFilter}
+                    onChange={(e) => setAnalyticsEquipmentFilter(e.target.value)}
+                    className="w-full p-3 bg-black/20 border border-orange-500/30 rounded-lg text-white text-base"
+                  >
                     <option value="">All Equipment</option>
                     <option value="Dumbbell">Dumbbell</option>
                     <option value="Barbell">Barbell</option>
@@ -1187,7 +1445,71 @@ export default function WorkoutTracker() {
                 </div>
               </div>
 
-              <p className="text-gray-400">Select an exercise to view detailed analytics including max weight, total volume, times performed, and RPE trends.</p>
+              {selectedExerciseForAnalytics ? (
+                (() => {
+                  const analytics = getExerciseAnalytics();
+                  if (!analytics) {
+                    return (
+                      <div className="mt-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                        <p className="text-yellow-400">No data found for this exercise{analyticsEquipmentFilter ? ` with ${analyticsEquipmentFilter} equipment` : ''}.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="mt-6 space-y-6">
+                      {/* Stats Cards */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="bg-black/20 rounded-lg p-4 border border-orange-500/20">
+                          <h4 className="text-sm font-medium text-gray-400">Max Weight</h4>
+                          <p className="text-2xl font-bold text-orange-400">{analytics.maxWeight} lbs</p>
+                        </div>
+                        <div className="bg-black/20 rounded-lg p-4 border border-orange-500/20">
+                          <h4 className="text-sm font-medium text-gray-400">Total Volume</h4>
+                          <p className="text-2xl font-bold text-orange-400">{analytics.totalVolume.toLocaleString()} lbs</p>
+                        </div>
+                        <div className="bg-black/20 rounded-lg p-4 border border-orange-500/20">
+                          <h4 className="text-sm font-medium text-gray-400">Times Performed</h4>
+                          <p className="text-2xl font-bold text-orange-400">{analytics.timesPerformed}</p>
+                        </div>
+                        <div className="bg-black/20 rounded-lg p-4 border border-orange-500/20">
+                          <h4 className="text-sm font-medium text-gray-400">Avg RPE</h4>
+                          <p className="text-2xl font-bold text-orange-400">{analytics.avgRPE}</p>
+                        </div>
+                      </div>
+
+                      {/* Performance History */}
+                      <div className="bg-black/20 rounded-lg p-4 border border-orange-500/20">
+                        <h4 className="text-lg font-bold mb-4">Performance History</h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-orange-500/20">
+                                <th className="text-left p-2 text-gray-400">Date</th>
+                                <th className="text-left p-2 text-gray-400">Weight</th>
+                                <th className="text-left p-2 text-gray-400">Reps</th>
+                                <th className="text-left p-2 text-gray-400">Volume</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {analytics.performanceHistory.slice(-20).reverse().map((entry, idx) => (
+                                <tr key={idx} className="border-b border-white/5 hover:bg-white/5">
+                                  <td className="p-2">{new Date(entry.date).toLocaleDateString()}</td>
+                                  <td className="p-2">{entry.weight} lbs</td>
+                                  <td className="p-2">{entry.reps}</td>
+                                  <td className="p-2">{entry.volume} lbs</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <p className="mt-6 text-gray-400">Select an exercise to view detailed analytics including max weight, total volume, times performed, and RPE trends.</p>
+              )}
             </div>
           </div>
         )}
